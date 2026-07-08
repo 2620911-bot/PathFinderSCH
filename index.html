@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>학교 시설 길찾기</title>
+    <style>
+        body { 
+            font-family: 'Pretendard', 'Malgun Gothic', sans-serif; 
+            text-align: center; 
+            background-color: #f4f7f6; 
+            margin: 0; 
+            padding: 20px 10px; 
+            color: #333; 
+        }
+        .controls { 
+            background: #ffffff; 
+            padding: 25px; 
+            border-radius: 16px; 
+            box-shadow: 0 10px 30px rgba(0,0,0,0.05); 
+            margin-bottom: 20px; 
+            display: flex; 
+            flex-direction: column; 
+            align-items: center; 
+            gap: 15px; 
+            max-width: 600px; 
+            margin-left: auto; 
+            margin-right: auto; 
+        }
+        .controls h2 { margin: 0 0 10px 0; color: #2c3e50; font-size: 2.5rem; font-weight: bold; }
+        .search-container { width: 100%; display: flex; flex-direction: column; gap: 10px; }
+        .input-group { 
+            display: flex; 
+            align-items: center; 
+            background: #f8f9fa; 
+            border: 1px solid #e9ecef; 
+            border-radius: 12px; 
+            padding: 5px 15px; 
+            transition: all 0.3s ease; 
+        }
+        .input-group:focus-within { 
+            border-color: #3498db; 
+            box-shadow: 0 0 0 3px rgba(52,152,219,0.15); 
+            background: #fff; 
+        }
+        select { 
+            border: none; 
+            background: transparent; 
+            padding: 12px 0; 
+            outline: none; 
+            font-size: 15px; 
+            flex: 1; 
+            color: #2c3e50;
+            cursor: pointer;
+            font-family: inherit;
+        }
+        .btn-search { 
+            padding: 14px 24px; 
+            background-color: #3498db; 
+            color: white; 
+            border: none; 
+            border-radius: 12px; 
+            cursor: pointer; 
+            font-size: 16px; 
+            font-weight: bold; 
+            width: 100%; 
+            transition: 0.2s; 
+            box-shadow: 0 4px 10px rgba(52,152,219,0.3); 
+        }
+        .btn-search:hover { background-color: #2980b9; transform: translateY(-2px); box-shadow: 0 6px 15px rgba(52,152,219,0.4); }
+        .route-box { 
+            background: #f8f9fa; 
+            padding: 18px; 
+            border-radius: 12px; 
+            width: 100%; 
+            box-sizing: border-box; 
+            text-align: left; 
+            display: none; 
+        }
+        .route-box h3 { margin: 0 0 10px 0; color: #2c3e50; font-size: 16px; }
+        .route-text { 
+            font-size: 15px; 
+            color: #34495e; 
+            line-height: 1.6; 
+            word-break: keep-all; 
+            font-weight: 500;
+        }
+        .route-arrow { color: #e74c3c; font-weight: bold; margin: 0 6px; font-size: 14px; }
+        .canvas-container { 
+            width: 100%; 
+            overflow-x: auto; 
+            overflow-y: auto; 
+            background: #fff; 
+            border-radius: 16px; 
+            padding: 20px 0; 
+            max-height: 70vh; 
+            box-shadow: 0 5px 20px rgba(0,0,0,0.05);
+        }
+        canvas { max-width: 100%; height: auto; display: block; margin: 0 auto; }
+    </style>
+</head>
+<body>
+    <div class="controls">
+        <h2>길찾기</h2>
+        
+        <div class="search-container">
+            <div class="input-group">
+                <select id="startSelect">
+                    <option value="" disabled selected>출발지를 선택하세요</option>
+                </select>
+            </div>
+            
+            <div class="input-group">
+                <select id="goalSelect">
+                    <option value="" disabled selected>도착지를 선택하세요</option>
+                </select>
+            </div>
+        </div>
+        
+        <button class="btn-search" onclick="findPath()">경로 찾기</button>
+        <p id="statusMsg" style="color: #7f8c8d; margin: 0; font-size: 14px;"></p>
+
+        <div id="routeResult" class="route-box">
+            <h3>이동 경로 안내</h3>
+            <div id="routeText" class="route-text"></div>
+        </div>
+    </div>
+
+    <div class="canvas-container">
+        <canvas id="mapCanvas"></canvas>
+    </div>
+
+    <script>
+        let mapData = null;
+        const images = {};
+        const canvas = document.getElementById('mapCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        const imgNames = ['1f.png', '2f.png', '3f.png', '4f.png', '5f.png'];
+        let loadedImages = 0;
+        let positions = {};
+
+        window.onload = async () => {
+            document.getElementById('statusMsg').innerText = "데이터 불러오는 중...";
+            
+            try {
+                const response = await fetch('map_data_full.json');
+                mapData = await response.json();
+                
+                transformCoordinates(); 
+                populateSelects();
+                
+            } catch (e) {
+                document.getElementById('statusMsg').innerText = "JSON 데이터를 불러오지 못했습니다.";
+            }
+
+            imgNames.forEach((name, index) => {
+                const img = new Image();
+                img.src = name;
+                img.onload = () => {
+                    const floor = index + 1;
+                    images[floor] = img;
+                    loadedImages++;
+                    if(loadedImages === 5 && mapData) {
+                        document.getElementById('statusMsg').innerText = "준비 완료!";
+                        initCanvas();
+                    }
+                };
+            });
+        };
+
+        function populateSelects() {
+            const startSelect = document.getElementById('startSelect');
+            const goalSelect = document.getElementById('goalSelect');
+            const namedNodes = mapData.nodes.filter(n => n.name && n.name.trim() !== "");
+            
+            namedNodes.sort((a, b) => a.name.localeCompare(b.name));
+
+            namedNodes.forEach(node => {
+                const option1 = document.createElement('option');
+                option1.value = node.id; 
+                option1.text = `${node.name}`;
+                startSelect.appendChild(option1);
+
+                const option2 = document.createElement('option');
+                option2.value = node.id;
+                option2.text = `${node.name}`;
+                goalSelect.appendChild(option2);
+            });
+        }
+
+        function transformCoordinates() {
+            const oldImgW = 800;
+            const oldRow1H = 600; 
+
+            mapData.nodes.forEach(n => {
+                let floor = 1;
+                let localX = 0, localY = 0;
+
+                if (n.y < oldRow1H + 75) { 
+                    if (n.x < 50 + oldImgW) { floor = 3; localX = n.x - 50; localY = n.y - 50; }
+                    else if (n.x < 50 + oldImgW * 2) { floor = 4; localX = n.x - (50 + oldImgW); localY = n.y - 50; }
+                    else { floor = 5; localX = n.x - (50 + oldImgW * 2); localY = n.y - 50; }
+                } else {
+                    if (n.x < 50 + oldImgW) { floor = 1; localX = n.x - 50; localY = n.y - (oldRow1H + 100); }
+                    else { floor = 2; localX = n.x - (50 + oldImgW); localY = n.y - (oldRow1H + 100); }
+                }
+                
+                n.floor = floor;
+                n.localX = localX;
+                n.localY = localY;
+            });
+        }
+
+        function initCanvas() {
+            const imgW = images[1].width;
+            let currentY = 50;
+            
+            for (let f = 5; f >= 1; f--) {
+                positions[f] = { x: 120, y: currentY };
+                currentY += images[f].height + 80;
+            }
+
+            canvas.width = imgW + 240;
+            canvas.height = currentY + 50;
+
+            mapData.nodes.forEach(n => {
+                n.x = positions[n.floor].x + n.localX;
+                n.y = positions[n.floor].y + n.localY;
+            });
+
+            drawBaseMap();
+        }
+
+        function drawBaseMap() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            ctx.fillStyle = "#fff";
+            ctx.beginPath();
+            ctx.roundRect(50, 20, canvas.width - 100, canvas.height - 40, 20);
+            ctx.fill();
+
+            for (let f = 5; f >= 1; f--) {
+                const pos = positions[f];
+                
+                ctx.globalAlpha = 0.6;
+                ctx.drawImage(images[f], pos.x, pos.y);
+                
+                ctx.globalAlpha = 1.0;
+                ctx.fillStyle = "#2c3e50";
+                ctx.font = "bold 45px 'Malgun Gothic'";
+                ctx.fillText(f + "F", pos.x - 90, pos.y + (images[f].height / 2) + 15);
+            }
+
+            ctx.strokeStyle = "#bdc3c7";
+            ctx.lineWidth = 1;
+            mapData.edges.forEach(edge => {
+                const n1 = mapData.nodes[edge[0]];
+                const n2 = mapData.nodes[edge[1]];
+                ctx.beginPath();
+                ctx.moveTo(n1.x, n1.y);
+                ctx.lineTo(n2.x, n2.y);
+                ctx.stroke();
+            });
+        }
+
+        function heuristic(n1, n2) { return Math.hypot(n1.x - n2.x, n1.y - n2.y); }
+
+        function findPath() {
+            const startId = parseInt(document.getElementById('startSelect').value);
+            const goalId = parseInt(document.getElementById('goalSelect').value);
+
+            if (isNaN(startId) || isNaN(goalId)) {
+                alert("출발지와 도착지를 목록에서 선택해주세요.");
+                return;
+            }
+            if (startId === goalId) {
+                alert("출발지와 도착지가 같습니다. 다른 장소를 선택해주세요.");
+                return;
+            }
+
+            const graph = {};
+            mapData.nodes.forEach(n => graph[n.id] = []);
+            mapData.edges.forEach(edge => {
+                const u = edge[0], v = edge[1];
+                const dist = heuristic(mapData.nodes[u], mapData.nodes[v]);
+                graph[u].push({node: v, cost: dist});
+                graph[v].push({node: u, cost: dist});
+            });
+
+            let openSet = [{id: startId, f: 0}];
+            let cameFrom = {};
+            let gScore = {};
+            mapData.nodes.forEach(n => gScore[n.id] = Infinity);
+            gScore[startId] = 0;
+
+            while (openSet.length > 0) {
+                openSet.sort((a, b) => a.f - b.f);
+                const current = openSet.shift().id;
+
+                if (current === goalId) {
+                    let path = [];
+                    let curr = current;
+                    while (curr in cameFrom) { path.push(curr); curr = cameFrom[curr]; }
+                    path.push(startId);
+                    path = path.reverse();
+                    
+                    drawPath(path);
+                    displayRouteText(path); 
+                    document.getElementById('statusMsg').innerText = "하단에 표시되는 경로는 멋을 위한 것이므로 참고하지 않으시길 바랍니다.";
+                    return;
+                }
+
+                graph[current].forEach(neighbor => {
+                    let tentative_g = gScore[current] + neighbor.cost;
+                    if (tentative_g < gScore[neighbor.node]) {
+                        cameFrom[neighbor.node] = current;
+                        gScore[neighbor.node] = tentative_g;
+                        let fScore = tentative_g + heuristic(mapData.nodes[neighbor.node], mapData.nodes[goalId]);
+                        openSet.push({id: neighbor.node, f: fScore});
+                    }
+                });
+            }
+            document.getElementById('statusMsg').innerText = "경로가 없습니다. 길 연결 상태를 확인하세요.";
+            document.getElementById('routeResult').style.display = "none";
+        }
+
+        function displayRouteText(path) {
+            const routeNames = [];
+            path.forEach((nodeId, index) => {
+                const node = mapData.nodes[nodeId];
+                if (node.name && node.name.trim() !== "") {
+                    routeNames.push(`${node.floor}층 ${node.name}`);
+                } else if (index === 0 || index === path.length - 1) {
+                    routeNames.push(`${node.floor}층 위치`);
+                }
+            });
+
+            const cleanRouteNames = routeNames.filter((item, pos, arr) => {
+                return pos === 0 || item !== arr[pos - 1]; 
+            });
+
+            const resultHtml = cleanRouteNames.join(' <span class="route-arrow">></span> ');
+            
+            document.getElementById('routeText').innerHTML = resultHtml;
+            document.getElementById('routeResult').style.display = "block"; 
+        }
+
+        function drawPath(path) {
+            drawBaseMap(); 
+            
+            ctx.lineJoin = "round"; 
+            ctx.lineCap = "round";
+            
+            for(let i=0; i<path.length-1; i++) {
+                const p1 = mapData.nodes[path[i]]; 
+                const p2 = mapData.nodes[path[i+1]];
+                
+                ctx.beginPath();
+                
+                if (p1.floor !== p2.floor) {
+                    ctx.strokeStyle = "#f39c12"; 
+                    ctx.lineWidth = 4;
+                    ctx.setLineDash([10, 10]);
+                } else {
+                    ctx.strokeStyle = "#e74c3c"; 
+                    ctx.lineWidth = 6;
+                    ctx.setLineDash([]);
+                }
+                
+                ctx.moveTo(p1.x, p1.y); 
+                ctx.lineTo(p2.x, p2.y);
+                ctx.stroke();
+            }
+            ctx.setLineDash([]);
+
+            const startNode = mapData.nodes[path[0]]; 
+            const goalNode = mapData.nodes[path[path.length-1]];
+            
+            ctx.fillStyle = "#2ecc71";
+            ctx.beginPath(); ctx.arc(startNode.x, startNode.y, 14, 0, Math.PI*2); ctx.fill();
+            ctx.strokeStyle = "white"; ctx.lineWidth = 3; ctx.stroke();
+            
+            ctx.fillStyle = "#3498db";
+            ctx.beginPath(); ctx.arc(goalNode.x, goalNode.y, 14, 0, Math.PI*2); ctx.fill();
+            ctx.strokeStyle = "white"; ctx.lineWidth = 3; ctx.stroke();
+        }
+    </script>
+</body>
+</html>
