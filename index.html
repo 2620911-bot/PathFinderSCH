@@ -330,9 +330,9 @@
             path.forEach((nodeId, index) => {
                 const node = mapData.nodes[nodeId];
                 if (node.name && node.name.trim() !== "") {
-                    routeNames.push(`${node.floor}층 ${node.name}`);
+                    routeNames.push(`${node.name}`);
                 } else if (index === 0 || index === path.length - 1) {
-                    routeNames.push(`${node.floor}층 위치`);
+                    routeNames.push(``);
                 }
             });
 
